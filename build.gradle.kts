@@ -14,6 +14,17 @@ base {
     archivesName.set(project.property("archives_base_name") as String)
 }
 
+// Minecraft's own dependency set (via net.neoforged:minecraft-dependencies) pins commons-io
+// to 2.15.1 with a strict constraint, but fancymodloader separately requests 2.11.0 and
+// engine/fmod requests 2.18.0. Force everything onto the version Minecraft ships, since
+// commons-io is source/binary compatible across these minor releases. Kept in sync with the
+// same force in the root project's build.gradle.kts, since whichever project resolves this
+// build's dependency graph (root via the composite build, or this project directly, e.g. an
+// IDE sync) needs it declared on its own side.
+configurations.all {
+    resolutionStrategy.force("commons-io:commons-io:2.15.1")
+}
+
 neoForge {
     version = libs.versions.neoforge.asProvider().get()
     parchment {
@@ -115,6 +126,10 @@ repositories {
 }
 
 dependencies {
+    // Local FMOD Studio bindings (engine/fmod, included as a composite build).
+    implementation("engine:fmod:1.0")
+    jarJar("engine:fmod:1.0")
+
     implementation(libs.com.github.mcmodderanchor.simplebedrockmodel)
     jarJar(libs.com.github.mcmodderanchor.simplebedrockmodel)
     compileOnly(libs.com.maydaymemory.mae)
@@ -145,13 +160,15 @@ dependencies {
 }
 
 java {
-    toolchain.languageVersion = JavaLanguageVersion.of(21)
+    // Unified on Java 25, matching engine/fmod (whose classes this project's
+    // FmodWeaponSoundManager calls directly) and the rest of the repo.
+    toolchain.languageVersion = JavaLanguageVersion.of(25)
     withSourcesJar()
 }
 
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
-    options.release.set(21)
+    options.release.set(25)
 }
 
 tasks.processResources {

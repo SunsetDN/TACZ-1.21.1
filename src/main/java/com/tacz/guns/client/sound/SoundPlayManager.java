@@ -4,6 +4,7 @@ import com.tacz.guns.GunMod;
 import com.tacz.guns.api.TimelessAPI;
 import com.tacz.guns.api.item.IAttachment;
 import com.tacz.guns.client.resource.GunDisplayInstance;
+import com.tacz.guns.client.sound.fmod.FmodWeaponSoundManager;
 import com.tacz.guns.config.client.SoundConfig;
 import com.tacz.guns.config.common.GunConfig;
 import com.tacz.guns.init.ModSounds;
@@ -93,6 +94,7 @@ public class SoundPlayManager {
         if (tmpSoundInstance != null) {
             tmpSoundInstance.setStop();
         }
+        FmodWeaponSoundManager.stopLast();
     }
 
     public static void stopPlayGunSound(GunDisplayInstance gunIndex, String animationName) {
@@ -119,7 +121,7 @@ public class SoundPlayManager {
     }
 
     public static void playShootSound(LivingEntity entity, GunDisplayInstance gunIndex, GunData gunData) {
-        playClientSound(entity, gunIndex.getSounds(SoundManager.SHOOT_SOUND), 0.8f, 0.9f + entity.getRandom().nextFloat() * 0.125f, (int) (GunConfig.DEFAULT_GUN_FIRE_SOUND_DISTANCE.get() * gunData.getFireSound().getFireMultiplier()), false, SoundConfig.HIGH_FREQUENCY_SOUND_CONCURRENCY_LIMIT.get(), false, false);
+        FmodWeaponSoundManager.playShoot(entity, gunIndex.getDisplayId());
     }
 
     public static void playSilenceSound(LivingEntity entity, GunDisplayInstance gunIndex, GunData gunData) {
@@ -142,9 +144,9 @@ public class SoundPlayManager {
 
     public static void playReloadSound(LivingEntity entity, GunDisplayInstance display, boolean noAmmo) {
         if (noAmmo) {
-            tmpSoundInstance = playClientSound(entity, display.getSounds(SoundManager.RELOAD_EMPTY_SOUND), 1.0f, 1.0f, GunConfig.DEFAULT_GUN_OTHER_SOUND_DISTANCE.get());
+            FmodWeaponSoundManager.playReloadEmpty(entity);
         } else {
-            tmpSoundInstance = playClientSound(entity, display.getSounds(SoundManager.RELOAD_TACTICAL_SOUND), 1.0f, 1.0f, GunConfig.DEFAULT_GUN_OTHER_SOUND_DISTANCE.get());
+            FmodWeaponSoundManager.playReloadTactical(entity);
         }
     }
 
@@ -157,15 +159,15 @@ public class SoundPlayManager {
     }
 
     public static void playBoltSound(LivingEntity entity, GunDisplayInstance display) {
-        tmpSoundInstance = playClientSound(entity, display.getSounds(SoundManager.BOLT_SOUND), 1.0f, 1.0f, GunConfig.DEFAULT_GUN_OTHER_SOUND_DISTANCE.get());
+        FmodWeaponSoundManager.playBolt(entity);
     }
 
     public static void playDrawSound(LivingEntity entity, GunDisplayInstance display) {
-        tmpSoundInstance = playClientSound(entity, display.getSounds(SoundManager.DRAW_SOUND), 1.0f, 1.0f, GunConfig.DEFAULT_GUN_OTHER_SOUND_DISTANCE.get());
+        FmodWeaponSoundManager.playDraw(entity, display.getDisplayId());
     }
 
     public static void playPutAwaySound(LivingEntity entity, GunDisplayInstance display) {
-        tmpSoundInstance = playClientSound(entity, display.getSounds(SoundManager.PUT_AWAY_SOUND), 1.0f, 1.0f, GunConfig.DEFAULT_GUN_OTHER_SOUND_DISTANCE.get());
+        FmodWeaponSoundManager.playPutAway(entity, display.getDisplayId());
     }
 
     public static void playFireSelectSound(LivingEntity entity, GunDisplayInstance display) {

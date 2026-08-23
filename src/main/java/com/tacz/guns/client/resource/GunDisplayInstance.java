@@ -669,6 +669,10 @@ public class GunDisplayInstance {
         return sounds.get(name);
     }
 
+    public ResourceLocation getDisplayId() {
+        return displayId;
+    }
+
     public List<ResourceLocation> getPreloadSounds() {
         return preloadSounds;
     }

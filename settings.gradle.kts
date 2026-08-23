@@ -9,3 +9,9 @@ pluginManagement {
 }
 
 rootProject.name = "tacz"
+
+includeBuild("../../engine/fmod") {
+    dependencySubstitution {
+        substitute(module("engine:fmod")).using(project(":"))
+    }
+}

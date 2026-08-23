@@ -1,8 +1,8 @@
 [versions]
 dotenv = "4.0.0"
-neoforge = "21.1.233"
+neoforge = "21.1.248"
 neoforge-range = "[21,)"
-moddev = "2.0.74"
+moddev = "2.0.144"
 parchment = "2024.11.17"
 minecraft = "1.21.1"
 minecraft-range = "[1.21.1]"
