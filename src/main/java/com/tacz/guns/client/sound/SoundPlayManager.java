@@ -144,9 +144,9 @@ public class SoundPlayManager {
 
     public static void playReloadSound(LivingEntity entity, GunDisplayInstance display, boolean noAmmo) {
         if (noAmmo) {
-            FmodWeaponSoundManager.playReloadEmpty(entity);
+            FmodWeaponSoundManager.playReloadEmpty(entity, display.getDisplayId());
         } else {
-            FmodWeaponSoundManager.playReloadTactical(entity);
+            FmodWeaponSoundManager.playReloadTactical(entity, display.getDisplayId());
         }
     }
 

@@ -160,15 +160,18 @@ dependencies {
 }
 
 java {
-    // Unified on Java 25, matching engine/fmod (whose classes this project's
-    // FmodWeaponSoundManager calls directly) and the rest of the repo.
-    toolchain.languageVersion = JavaLanguageVersion.of(25)
+    // Java 21 -- what Mojang ships to end users for Minecraft 1.21.1. Was Java 25 until
+    // 2026-08-26 (see the root project's build.gradle.kts for the full story): engine/fmod's
+    // classes, which FmodWeaponSoundManager calls directly, used to require JDK 24+ (jextract/
+    // java.lang.foreign bindings), forcing this project onto the same floor. engine/fmod is now
+    // hand-written JNI with no such requirement.
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
     withSourcesJar()
 }
 
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
-    options.release.set(25)
+    options.release.set(21)
 }
 
 tasks.processResources {

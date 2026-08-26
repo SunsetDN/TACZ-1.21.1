@@ -40,7 +40,14 @@ public final class FmodWeaponSoundManager {
     private static final String BANK_SOURCE_MOD_ID = "dncity";
     private static final String MASTER_BANK_RESOURCE = "fmod/Master.bank";
     private static final String MASTER_STRINGS_BANK_RESOURCE = "fmod/Master.strings.bank";
-    private static final String WEAPONS_BANK_RESOURCE = "fmod/weapons.bank";
+    // Must match the real file's exact case (src/main/resources/fmod/Weapons.bank in the dncity
+    // project) -- FmodBankLocator resolves this through IModFile.findResource against a real jar
+    // entry in a packaged build, which is case-sensitive, unlike a dev-run's loose classpath
+    // directory lookup (case-insensitive on Windows). A lowercase "weapons.bank" here loaded fine
+    // under runClient but silently failed (IOException, caught, falls back to no weapon sound at
+    // all) once actually packaged and installed -- confirmed from a real installed instance's
+    // crash log pointing at FmodBankLocator.extractBank's "resource not found" throw.
+    private static final String WEAPONS_BANK_RESOURCE = "fmod/Weapons.bank";
 
     private static boolean initAttempted = false;
     private static FMODSystem system = null;
@@ -133,17 +140,42 @@ public final class FmodWeaponSoundManager {
         playAt(eventGuid, entity.position());
     }
 
-    /** Plays a gun's shoot event, chosen via {@link WeaponFmodEvents#shootEventFor}. */
+    /**
+     * Plays a gun's shoot event, chosen via {@link WeaponFmodEvents#shootEventFor}, with the
+     * {@code IsOutside} parameter set from whether the shooter can currently see the sky (a
+     * cheap, robust indoor/outdoor proxy) -- these events' gunshot acoustics (reverb send,
+     * tail/echo layers) are authored in the bank to differ noticeably by that parameter. Silently
+     * skipped for whichever fallback/default events don't define it (checked via {@link
+     * FMODSystem.EventDescription#getParameterNames}, not just try/caught, so a genuine FMOD
+     * failure to set it on an event that *does* have it isn't swallowed the same way).
+     */
     public static void playShoot(Entity entity, ResourceLocation gunDisplayId) {
-        playAt(WeaponFmodEvents.shootEventFor(gunDisplayId), entity);
+        ensureInitialized();
+        if (system == null) {
+            return;
+        }
+        try {
+            FMODSystem.EventDescription description = system.getEvent(WeaponFmodEvents.shootEventFor(gunDisplayId));
+            FMODSystem.EventInstance instance = description.createInstance();
+            Vec3 position = entity.position();
+            instance.set3DAttributes(Attributes3D.stationary((float) position.x, (float) position.y, (float) position.z));
+            if (description.getParameterNames().contains("IsOutside")) {
+                boolean outside = entity.level().canSeeSky(entity.blockPosition());
+                instance.setParameterByName("IsOutside", outside ? 1f : 0f);
+            }
+            instance.start();
+            instance.release();
+        } catch (FMODException e) {
+            GunMod.LOGGER.warn("[TACZ FMOD] Failed to play shoot event for {}", gunDisplayId, e);
+        }
     }
 
-    public static void playReloadTactical(Entity entity) {
-        playOther(WeaponFmodEvents.RELOAD_TACTICAL, entity);
+    public static void playReloadTactical(Entity entity, ResourceLocation gunDisplayId) {
+        playOther(WeaponFmodEvents.reloadTacticalEventFor(gunDisplayId), entity);
     }
 
-    public static void playReloadEmpty(Entity entity) {
-        playOther(WeaponFmodEvents.RELOAD_EMPTY, entity);
+    public static void playReloadEmpty(Entity entity, ResourceLocation gunDisplayId) {
+        playOther(WeaponFmodEvents.reloadEmptyEventFor(gunDisplayId), entity);
     }
 
     public static void playBolt(Entity entity) {

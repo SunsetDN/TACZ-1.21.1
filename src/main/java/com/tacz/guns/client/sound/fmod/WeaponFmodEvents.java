@@ -41,11 +41,99 @@ final class WeaponFmodEvents {
     /** Fallback category for guns not present in {@link #GUN_CATEGORIES}. */
     static final WeaponCategory DEFAULT_CATEGORY = WeaponCategory.RIFLE;
 
-    // No per-category reload split (tactical/empty) or bolt sound exists in the bank under
-    // Shared/ -- these are the closest generic equivalents available for all categories.
+    // Generic fallback for any gun not present in GUN_RELOAD_TACTICAL_EVENTS/GUN_RELOAD_EMPTY_EVENTS
+    // below -- either its weapon folder has no reload-ish events at all (e.g. G36/M24/M249/SR16/
+    // M32A1/Uzi, verified by dumping every event under each folder), or it wasn't worth the
+    // per-gun research. No per-category reload split (tactical/empty) exists in the bank under
+    // Shared/ either, so both fall back to the same generic "Mag In" foley.
     static final String RELOAD_TACTICAL = "event:/Weapons/Shared/Rifles Shared/Mag In";
     static final String RELOAD_EMPTY = "event:/Weapons/Shared/Rifles Shared/Mag In";
     static final String BOLT = "event:/Weapons/Shared/Rifles Shared/Mag Hit";
+
+    /**
+     * Gun display id path to a gun-specific reload event, for guns whose weapon folder in the
+     * bank actually has a clean, unambiguous "Reload ... Start"-style event -- picked from a
+     * dump of every event under each folder (see {@link #GUN_SHOOT_EVENTS}' folder choice for
+     * each gun). A handful of folders bundle the reload foley into a differently-named single
+     * event instead of a "Start" (AK47's `AK102MagIn`, FNFAL's `Mag In`, M14's `Mag In`) --
+     * those are used as-is since they're still the correct, gun-specific sound. Guns whose
+     * folder has no reload event at all (G36/M24-family/M249-family/SR16-family/M32A1/Uzi) are
+     * intentionally absent here and fall back to {@link #RELOAD_TACTICAL}.
+     */
+    private static final Map<String, String> GUN_RELOAD_TACTICAL_EVENTS = Map.ofEntries(
+            Map.entry("aa12", "event:/Weapons/M1014/M1014 Reload Start"),
+            Map.entry("ak47", "event:/Weapons/AK47/AK102MagIn"),
+            Map.entry("b93r", "event:/Weapons/G18/G18C_Reload_Start"),
+            Map.entry("cz75", "event:/Weapons/G19 New/G19 Cloth-ReloadStart"),
+            Map.entry("db_long", "event:/Weapons/Nova/Nova Reload Start"),
+            Map.entry("db_short", "event:/Weapons/Nova/Nova Reload Start"),
+            Map.entry("deagle", "event:/Weapons/Python/Python ReloadStart"),
+            Map.entry("deagle_golden", "event:/Weapons/Python/Python ReloadStart"),
+            Map.entry("fn_fal", "event:/Weapons/FNFAL/FNFAL Mag In"),
+            Map.entry("glock_17", "event:/Weapons/G19 New/G19 Cloth-ReloadStart"),
+            Map.entry("hk416d", "event:/Weapons/HK416/HK416 Cloth-WetReloadStartGrab"),
+            Map.entry("hk_g3", "event:/Weapons/G3A4/G3A4 Reload Start"),
+            Map.entry("hk_mk23", "event:/Weapons/SOCOM/SOCOM Reload Normal Start"),
+            Map.entry("hk_mp5a5", "event:/Weapons/MP5/MP5 Reload Start"),
+            Map.entry("m107", "event:/Weapons/Grizzly/Grizzly ReloadStart"),
+            Map.entry("m1014", "event:/Weapons/M1014/M1014 Reload Start"),
+            Map.entry("m1911", "event:/Weapons/USP/USP ReloadStart"),
+            Map.entry("m16a1", "event:/Weapons/M4A1/M4A1 ReloadNormalStart"),
+            Map.entry("m16a4", "event:/Weapons/M4A1/M4A1 ReloadNormalStart"),
+            Map.entry("m320", "event:/Weapons/M320/M320 ReloadStart"),
+            Map.entry("m4a1", "event:/Weapons/M4A1/M4A1 ReloadNormalStart"),
+            Map.entry("m870", "event:/Weapons/870/870 Reload Start"),
+            Map.entry("m95", "event:/Weapons/Grizzly/Grizzly ReloadStart"),
+            Map.entry("m9a4", "event:/Weapons/M92FS/M92FS Reload Start"),
+            Map.entry("mk14", "event:/Weapons/M14/M14 Mag In"),
+            Map.entry("p320", "event:/Weapons/P229/P229 ReloadStart"),
+            Map.entry("p90", "event:/Weapons/P90/P90_Reload_Start"),
+            Map.entry("rhino357", "event:/Weapons/Python/Python ReloadStart"),
+            Map.entry("rpk", "event:/Weapons/AK47/AK102MagIn"),
+            Map.entry("scar_h", "event:/Weapons/Scar17/Scar17 ReloadNormal Start"),
+            Map.entry("scar_l", "event:/Weapons/ScarL/ScarL ReloadNormal Start"),
+            Map.entry("sks_tactical", "event:/Weapons/SLR/SLR Normal Reload Start"),
+            Map.entry("spas_12", "event:/Weapons/Nova/Nova Reload Start"),
+            Map.entry("taurus500", "event:/Weapons/Python/Python ReloadStart"),
+            Map.entry("taurus943", "event:/Weapons/Python/Python ReloadStart"),
+            Map.entry("timeless50", "event:/Weapons/USP/USP ReloadStart"),
+            Map.entry("type_81", "event:/Weapons/AK47/AK102MagIn"),
+            Map.entry("ump45", "event:/Weapons/UMP45/UMP45 ReloadWetNormalStart"),
+            Map.entry("vector45", "event:/Weapons/MP9/MP9 Reload Start"));
+
+    /**
+     * Same as {@link #GUN_RELOAD_TACTICAL_EVENTS}, for the "no ammo left, full/empty-chamber
+     * reload" variant -- only present for guns whose folder actually distinguishes the two
+     * (usually named "Empty"/"Dry" vs. "Normal"/"Wet"/plain). Guns without a distinct empty
+     * variant (revolvers, single actions, and a few others with only one reload take) are
+     * absent and fall back to {@link #GUN_RELOAD_TACTICAL_EVENTS}/{@link #RELOAD_TACTICAL} via
+     * {@link #reloadEmptyEventFor}, since one reload sound is all there is either way.
+     */
+    private static final Map<String, String> GUN_RELOAD_EMPTY_EVENTS = Map.ofEntries(
+            Map.entry("aa12", "event:/Weapons/M1014/M1014 Reload Empty"),
+            Map.entry("b93r", "event:/Weapons/G18/G18C_ReloadEmpty_Start"),
+            Map.entry("hk416d", "event:/Weapons/HK416/HK416 Cloth-DryReloadStart"),
+            Map.entry("hk_g3", "event:/Weapons/G3A4/G3A4 ReloadEmpty Start"),
+            Map.entry("hk_mk23", "event:/Weapons/SOCOM/SOCOM Reload Dry Start"),
+            Map.entry("hk_mp5a5", "event:/Weapons/MP5/MP5 Reload Dry Start"),
+            Map.entry("m107", "event:/Weapons/Grizzly/Grizzly Reload Empty Start"),
+            Map.entry("m1014", "event:/Weapons/M1014/M1014 Reload Empty"),
+            Map.entry("m1911", "event:/Weapons/USP/USP QuickAndEmptyReloadStart"),
+            Map.entry("m16a1", "event:/Weapons/M4A1/M4A1 ReloadEmptyStart"),
+            Map.entry("m16a4", "event:/Weapons/M4A1/M4A1 ReloadEmptyStart"),
+            Map.entry("m4a1", "event:/Weapons/M4A1/M4A1 ReloadEmptyStart"),
+            Map.entry("m95", "event:/Weapons/Grizzly/Grizzly Reload Empty Start"),
+            Map.entry("m9a4", "event:/Weapons/M92FS/M92FS Reload Empty Start"),
+            Map.entry("p320", "event:/Weapons/P229/P229 Reload Empty Start"),
+            Map.entry("p90", "event:/Weapons/P90/P90_Reload_Empty_Start"),
+            Map.entry("scar_h", "event:/Weapons/Scar17/Scar17 ReloadEmpty Start"),
+            Map.entry("scar_l", "event:/Weapons/ScarL/ScarL ReloadEmpty Start"),
+            Map.entry("spas_12", "event:/Weapons/Nova/Nova Reload Empty Start"),
+            Map.entry("db_long", "event:/Weapons/Nova/Nova Reload Empty Start"),
+            Map.entry("db_short", "event:/Weapons/Nova/Nova Reload Empty Start"),
+            Map.entry("timeless50", "event:/Weapons/USP/USP QuickAndEmptyReloadStart"),
+            Map.entry("ump45", "event:/Weapons/UMP45/UMP45 ReloadEmptyStart"),
+            Map.entry("vector45", "event:/Weapons/MP9/MP9 ReloadEmpty and Quick Start"));
 
     /**
      * Gun display id path (e.g. {@code "m4a1"} from {@code tacz:m4a1}) to shoot event path,
@@ -188,5 +276,17 @@ final class WeaponFmodEvents {
 
     static String putAwayEventFor(ResourceLocation gunDisplayId) {
         return HOLSTER_EVENTS.get(GUN_CATEGORIES.getOrDefault(gunDisplayId.getPath(), DEFAULT_CATEGORY));
+    }
+
+    static String reloadTacticalEventFor(ResourceLocation gunDisplayId) {
+        return GUN_RELOAD_TACTICAL_EVENTS.getOrDefault(gunDisplayId.getPath(), RELOAD_TACTICAL);
+    }
+
+    /** Falls back to the gun's tactical reload event (not straight to {@link #RELOAD_EMPTY})
+     * before the fully-generic one, since a gun with only one reload take should still get its
+     * own specific sound rather than the generic placeholder. */
+    static String reloadEmptyEventFor(ResourceLocation gunDisplayId) {
+        String path = gunDisplayId.getPath();
+        return GUN_RELOAD_EMPTY_EVENTS.getOrDefault(path, GUN_RELOAD_TACTICAL_EVENTS.getOrDefault(path, RELOAD_EMPTY));
     }
 }
