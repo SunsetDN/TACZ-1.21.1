@@ -35,6 +35,7 @@ neoForge {
 
     runs {
         configureEach {
+            disableIdeRun()
             systemProperty("forge.logging.console.level", "debug")
 
             dependencies {
@@ -122,6 +123,13 @@ repositories {
     }
     flatDir {
         dir("libs")
+    }
+    // Required to resolve Sodium's/Iris's own forgified-fabric-api dependency when Gradle
+    // resolves this project's own configurations -- same reason the root build.gradle.kts
+    // declares this repo.
+    maven {
+        url = uri("https://maven.su5ed.dev/releases")
+        content { includeGroup("org.sinytra.forgified-fabric-api") }
     }
 }
 

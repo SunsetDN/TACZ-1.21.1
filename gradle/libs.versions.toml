@@ -8,7 +8,7 @@ minecraft = "1.21.1"
 minecraft-range = "[1.21.1]"
 mod-publish = "2.1.1"
 
-simplebedrockmodel = "2.2.1-neoforge+mc1.21.1"
+simplebedrockmodel = "2.2.2-neoforge-mc1.21.1"
 mae = "1.1.2"
 commons-math = "3.6.1"
 luaj = "3.0.8-figura"
