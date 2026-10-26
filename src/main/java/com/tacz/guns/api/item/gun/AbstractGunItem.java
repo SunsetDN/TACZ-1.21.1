@@ -7,17 +7,20 @@ import com.tacz.guns.api.item.*;
 import com.tacz.guns.api.item.attachment.AttachmentType;
 import com.tacz.guns.api.item.builder.AmmoItemBuilder;
 import com.tacz.guns.api.item.builder.GunItemBuilder;
+import com.tacz.guns.api.item.nbt.LoadedRounds;
 import com.tacz.guns.client.renderer.item.GunItemRendererWrapper;
 import com.tacz.guns.client.resource.index.ClientGunIndex;
 import com.tacz.guns.entity.shooter.ShooterDataHolder;
 import com.tacz.guns.inventory.tooltip.GunTooltip;
 import com.tacz.guns.resource.index.CommonGunIndex;
+import com.tacz.guns.resource.pojo.data.gun.Bolt;
 import com.tacz.guns.resource.pojo.data.gun.FeedType;
 import com.tacz.guns.resource.pojo.data.gun.GunData;
 import com.tacz.guns.util.AllowAttachmentTagMatcher;
 import com.tacz.guns.util.AttachmentDataUtils;
 import net.minecraft.client.renderer.BlockEntityWithoutLevelRenderer;
 import net.minecraft.core.NonNullList;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.LivingEntity;
@@ -177,6 +180,8 @@ public abstract class AbstractGunItem extends Item implements IGun, IAnimationIt
             return;
         }
         ResourceLocation gunId = getGunId(gunItem);
+        // DNCity: 弹匣内记录的子弹 (枪膛那一发留在枪里)
+        List<LoadedRounds.Round> magazineRounds = LoadedRounds.trim(gunItem, getRoundsInGun(gunItem) - ammoCount);
         TimelessAPI.getCommonGunIndex(gunId).ifPresent(index -> {
             // 如果使用的是虚拟备弹，返还至虚拟备弹
             if (useDummyAmmo(gunItem)) {
@@ -201,9 +206,33 @@ public abstract class AbstractGunItem extends Item implements IGun, IAnimationIt
                 setCurrentAmmoCount(gunItem, 0);
                 return;
             }
+            // 有记录的子弹按原物品返还，剩下的才作为普通 TACZ 弹药返还
+            int knownCount = 0;
+            Map<Item, Integer> knownItems = new LinkedHashMap<>();
+            for (LoadedRounds.Round round : magazineRounds.subList(0, Math.min(ammoCount, magazineRounds.size()))) {
+                if (round.known() && BuiltInRegistries.ITEM.containsKey(round.id())) {
+                    knownItems.merge(BuiltInRegistries.ITEM.get(round.id()), 1, Integer::sum);
+                    knownCount++;
+                }
+            }
+            knownItems.forEach((item, count) -> {
+                int left = count;
+                while (left > 0) {
+                    ItemStack stack = new ItemStack(item);
+                    int n = Math.min(left, stack.getMaxStackSize());
+                    stack.setCount(n);
+                    ItemHandlerHelper.giveItemToPlayer(player, stack);
+                    left -= n;
+                }
+            });
+            final int unknownCount = ammoCount - knownCount;
+            if (unknownCount <= 0) {
+                setCurrentAmmoCount(gunItem, 0);
+                return;
+            }
             TimelessAPI.getCommonAmmoIndex(ammoId).ifPresent(ammoIndex -> {
                 int stackSize = ammoIndex.getStackSize();
-                int tmpAmmoCount = ammoCount;
+                int tmpAmmoCount = unknownCount;
                 int roundCount = tmpAmmoCount / (stackSize + 1);
                 for (int i = 0; i <= roundCount; i++) {
                     int count = Math.min(tmpAmmoCount, stackSize);
@@ -236,32 +265,79 @@ public abstract class AbstractGunItem extends Item implements IGun, IAnimationIt
      * @return 寻找到的弹药 (物品) 数量
      */
     public int findAndExtractInventoryAmmo(IItemHandler itemHandler, ItemStack gunItem, int needAmmoCount) {
-        int cnt = needAmmoCount;
-        // 背包检查
+        if (needAmmoCount <= 0) {
+            return 0;
+        }
+        // DNCity: 记录装入的每一发子弹 (LoadedRounds)，曳光弹与其他弹按 1:4 混装
+        LoadedRounds.trim(gunItem, getRoundsInGun(gunItem));
+        List<LoadedRounds.Round> loaded = new ArrayList<>();
+        int cycle = LoadedRounds.getFeedCycle(gunItem);
+        while (loaded.size() < needAmmoCount) {
+            boolean wantTracer = LoadedRounds.wantsTracer(cycle);
+            int slot = findAmmoSlot(itemHandler, gunItem, wantTracer);
+            if (slot < 0) {
+                slot = findAmmoSlot(itemHandler, gunItem, !wantTracer);
+            }
+            if (slot < 0) {
+                break;
+            }
+            LoadedRounds.Round round = extractOneRound(itemHandler, slot, gunItem);
+            if (round == null) {
+                break;
+            }
+            loaded.add(round);
+            cycle++;
+        }
+        LoadedRounds.setFeedCycle(gunItem, cycle);
+        LoadedRounds.append(gunItem, loaded);
+        return loaded.size();
+    }
+
+    /**
+     * 当前枪内实际有几发子弹（弹匣 + 枪膛）。背包直读的枪只有枪膛。
+     */
+    public int getRoundsInGun(ItemStack gunItem) {
+        boolean openBolt = TimelessAPI.getCommonGunIndex(getGunId(gunItem))
+                .map(index -> index.getGunData().getBolt() == Bolt.OPEN_BOLT).orElse(false);
+        int barrel = hasBulletInBarrel(gunItem) && !openBolt ? 1 : 0;
+        return useInventoryAmmo(gunItem) ? barrel : getCurrentAmmoCount(gunItem) + barrel;
+    }
+
+    /**
+     * 第一个能提供所需种类子弹的槽位。弹药盒和普通 TACZ 弹药算作非曳光弹。
+     */
+    private static int findAmmoSlot(IItemHandler itemHandler, ItemStack gunItem, boolean tracer) {
         for (int i = 0; i < itemHandler.getSlots(); i++) {
-            ItemStack checkAmmoStack = itemHandler.getStackInSlot(i);
-            if (checkAmmoStack.getItem() instanceof IAmmo iAmmo && iAmmo.isAmmoOfGun(gunItem, checkAmmoStack)) {
-                ItemStack extractItem = itemHandler.extractItem(i, cnt, false);
-                cnt = cnt - extractItem.getCount();
-                if (cnt <= 0) {
-                    break;
+            ItemStack stack = itemHandler.getStackInSlot(i);
+            if (stack.getItem() instanceof IAmmo iAmmo && iAmmo.isAmmoOfGun(gunItem, stack)) {
+                boolean isTracer = stack.getItem() instanceof IAmmoRound round && round.isTracerRound(stack);
+                if (isTracer == tracer) {
+                    return i;
                 }
             }
-            if (checkAmmoStack.getItem() instanceof IAmmoBox iAmmoBox && iAmmoBox.isAmmoBoxOfGun(gunItem, checkAmmoStack)) {
-                int boxAmmoCount = iAmmoBox.getAmmoCount(checkAmmoStack);
-                int extractCount = Math.min(boxAmmoCount, cnt);
-                int remainCount = boxAmmoCount - extractCount;
-                iAmmoBox.setAmmoCount(checkAmmoStack, remainCount);
-                if (remainCount <= 0) {
-                    iAmmoBox.setAmmoId(checkAmmoStack, DefaultAssets.EMPTY_AMMO_ID);
-                }
-                cnt = cnt - extractCount;
-                if (cnt <= 0) {
-                    break;
-                }
+            if (!tracer && stack.getItem() instanceof IAmmoBox iAmmoBox && iAmmoBox.isAmmoBoxOfGun(gunItem, stack)
+                    && iAmmoBox.getAmmoCount(stack) > 0) {
+                return i;
             }
         }
-        return needAmmoCount - cnt;
+        return -1;
+    }
+
+    private static LoadedRounds.Round extractOneRound(IItemHandler itemHandler, int slot, ItemStack gunItem) {
+        ItemStack stack = itemHandler.getStackInSlot(slot);
+        if (stack.getItem() instanceof IAmmo) {
+            ItemStack extracted = itemHandler.extractItem(slot, 1, false);
+            return extracted.isEmpty() ? null : LoadedRounds.Round.of(extracted);
+        }
+        if (stack.getItem() instanceof IAmmoBox iAmmoBox && iAmmoBox.isAmmoBoxOfGun(gunItem, stack)) {
+            int remainCount = iAmmoBox.getAmmoCount(stack) - 1;
+            iAmmoBox.setAmmoCount(stack, remainCount);
+            if (remainCount <= 0) {
+                iAmmoBox.setAmmoId(stack, DefaultAssets.EMPTY_AMMO_ID);
+            }
+            return LoadedRounds.Round.UNKNOWN;
+        }
+        return null;
     }
 
     /**

@@ -4,6 +4,7 @@ import com.tacz.guns.GunMod;
 import com.tacz.guns.api.DefaultAssets;
 import com.tacz.guns.api.TimelessAPI;
 import com.tacz.guns.api.item.IAmmo;
+import com.tacz.guns.api.item.IAmmoRound;
 import com.tacz.guns.api.item.IAmmoBox;
 import com.tacz.guns.api.item.builder.AmmoItemBuilder;
 import com.tacz.guns.api.item.nbt.AmmoBoxItemDataAccessor;
@@ -139,8 +140,8 @@ public class AmmoBoxItem extends Item implements AmmoBoxItemDataAccessor {
 
             // 如果是子弹
             if (slotItem.getItem() instanceof IAmmo iAmmo) {
-                // 全类型弹药箱不能存入
-                if (isAllTypeCreative(ammoBox)) {
+                // 全类型弹药箱不能存入；DNCity 的具体子弹 (IAmmoRound) 也不能存入，弹药箱只记数量会丢失弹种
+                if (isAllTypeCreative(ammoBox) || slotItem.getItem() instanceof IAmmoRound) {
                     return false;
                 }
                 ResourceLocation slotAmmoId = iAmmo.getAmmoId(slotItem);

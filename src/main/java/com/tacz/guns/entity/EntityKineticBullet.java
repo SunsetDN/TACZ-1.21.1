@@ -135,6 +135,9 @@ public class EntityKineticBullet extends Projectile implements IEntityWithComple
     private Vec3 startPos;
     // 曳光弹
     private boolean isTracerAmmo;
+    // DNCity: 具体子弹物品 ID
+    @Nullable
+    private ResourceLocation roundId;
     // 以下几个是只对客户端有用的曳光弹数据
     private float cameraXRot;
     private float cameraYRot;
@@ -268,6 +271,13 @@ public class EntityKineticBullet extends Projectile implements IEntityWithComple
         double nextPosX = this.getX() + x;
         double nextPosY = this.getY() + y;
         double nextPosZ = this.getZ() + z;
+        if (this.penetrationTickEnd != null) {
+            // Went through a block this tick: the traced path ends here, the slowed velocity applies from the next tick on
+            nextPosX = this.penetrationTickEnd.x;
+            nextPosY = this.penetrationTickEnd.y;
+            nextPosZ = this.penetrationTickEnd.z;
+            this.penetrationTickEnd = null;
+        }
         this.setPos(nextPosX, nextPosY, nextPosZ);
         float friction = this.friction;
         float gravity = this.gravity;
@@ -304,57 +314,116 @@ public class EntityKineticBullet extends Projectile implements IEntityWithComple
                     return;
                 }
             }
-            // 子弹在 tick 起始的位置
-            Vec3 startVec = this.position();
-            // 子弹在 tick 结束的位置
-            Vec3 endVec = startVec.add(this.getDeltaMovement());
-            // 子弹的碰撞检测
-            HitResult result = BlockRayTrace.rayTraceBlocks(this.level(), new ClipContext(startVec, endVec, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this));
-            BlockHitResult resultB = (BlockHitResult) result;
-            if (resultB.getType() != HitResult.Type.MISS) {
-                // 子弹击中方块时，设置击中方块的位置为子弹的结束位置
-                endVec = resultB.getLocation();
-            }
-
-            List<EntityResult> hitEntities = null;
-            // 子弹的击中检测，穿透为 1 或者爆炸类弹药限制为一个实体穿透判定
-            if (this.pierce <= 1 || this.explosion) {
-                EntityResult entityResult = EntityUtil.findEntityOnPath(this, startVec, endVec);
-                // 将单个命中是实体创建为单个内容的 list
-                if (entityResult != null) {
-                    hitEntities = Collections.singletonList(entityResult);
+            try {
+                this.traceTick();
+            } finally {
+                // A block passed this tick slows the bullet from the next tick on. Applied only now, because TACZ looks for
+                // entities in a box spanned by the velocity, which must still cover the whole path of this tick.
+                if (this.pendingSpeedFactor != 1f && !this.isRemoved()) {
+                    this.setDeltaMovement(this.getDeltaMovement().scale(this.pendingSpeedFactor));
                 }
-            } else {
-                hitEntities = EntityUtil.findEntitiesOnPath(this, startVec, endVec);
+                this.pendingSpeedFactor = 1f;
             }
-            // 当子弹击中实体时，进行被命中的实体读取
-            if (hitEntities != null && !hitEntities.isEmpty()) {
-                EntityResult[] hitEntityResult = hitEntities.toArray(new EntityResult[0]);
-                // 对被命中的实体进行排序，按照距离子弹发射位置的距离进行升序排序
-                for (int i = 0; (i < this.pierce || i < 1) && i < (hitEntityResult.length - 1); i++) {
-                    int k = i;
-                    for (int j = i + 1; j < hitEntityResult.length; j++) {
-                        if (hitEntityResult[j].hitVec.distanceTo(startVec) < hitEntityResult[k].hitVec.distanceTo(startVec)) {
-                            k = j;
-                        }
-                    }
-                    EntityResult t = hitEntityResult[i];
-                    hitEntityResult[i] = hitEntityResult[k];
-                    hitEntityResult[k] = t;
-                }
-                for (EntityResult entityResult : hitEntityResult) {
-                    result = new TacHitResult(entityResult);
-                    this.onHitEntity((TacHitResult) result, startVec, endVec);
-                    this.pierce--;
-                    if (this.pierce < 1 || this.explosion) {
-                        // 子弹已经穿透所有实体，结束子弹的飞行
-                        this.discard();
-                        return;
-                    }
-                }
-            }
-            this.onHitBlock(resultB, startVec, endVec);
         }
+    }
+
+    private void traceTick() {
+        // 子弹在 tick 起始的位置
+        Vec3 tickStart = this.position();
+        // 子弹在 tick 结束的位置
+        Vec3 tickEnd = tickStart.add(this.getDeltaMovement());
+        // The path of this tick is traced in segments: a block a listener lets the bullet through (AmmoHitBlockEvent#setPenetrated)
+        // ends one segment, and tracing resumes from where the bullet left that block, so whatever lies behind it in this tick is
+        // still hit. Without a penetration this is exactly one segment, as before.
+        Vec3 segmentStart = tickStart;
+        for (int segment = 0; segment < MAX_PENETRATION_SEGMENTS; segment++) {
+            HitResult result = BlockRayTrace.rayTraceBlocks(this.level(), new ClipContext(segmentStart, tickEnd, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this));
+            BlockHitResult resultB = (BlockHitResult) result;
+            // 子弹击中方块时，设置击中方块的位置为子弹的结束位置
+            Vec3 segmentEnd = resultB.getType() != HitResult.Type.MISS ? resultB.getLocation() : tickEnd;
+            if (this.hitEntitiesOnSegment(segmentStart, segmentEnd)) {
+                return;
+            }
+            if (resultB.getType() == HitResult.Type.MISS) {
+                return;
+            }
+            Vec3 exit = this.onHitBlock(resultB, segmentStart, segmentEnd);
+            if (exit == null || this.isRemoved()) {
+                return;
+            }
+            // Went through: resume just past the exit point, and finish this tick at the end of its path (not at the start
+            // plus the now reduced velocity, which would re-trace the block next tick).
+            segmentStart = exit.add(tickEnd.subtract(tickStart).normalize().scale(PENETRATION_EXIT_EPSILON));
+            this.penetrationTickEnd = tickEnd;
+        }
+    }
+
+    /** Most blocks one bullet can go through within one tick; a bound, not a gameplay value. */
+    private static final int MAX_PENETRATION_SEGMENTS = 16;
+    /** How far past a block's exit face tracing resumes, so the block just left is not hit again (blocks). */
+    private static final double PENETRATION_EXIT_EPSILON = 1.0E-4;
+    /** Set when the bullet went through a block this tick: where the tick's movement ends. */
+    @Nullable
+    private Vec3 penetrationTickEnd = null;
+    /** Speed the bullet was fired with (blocks/tick), so listeners can tell how much it has slowed down. */
+    private float initialSpeed = 0f;
+
+    /** Product of the speed factors of the blocks passed this tick; applied to the velocity at the end of the tick. */
+    private float pendingSpeedFactor = 1f;
+
+    public float getInitialSpeed() {
+        return initialSpeed;
+    }
+
+    /**
+     * Speed now (blocks/tick), including the slowdown of blocks already passed this tick (the velocity itself is only scaled at the
+     * end of the tick).
+     */
+    public double getCurrentSpeed() {
+        return this.getDeltaMovement().length() * this.pendingSpeedFactor;
+    }
+
+    /** @return true if the bullet was used up (discarded) on an entity of this segment */
+    private boolean hitEntitiesOnSegment(Vec3 startVec, Vec3 endVec) {
+        HitResult result;
+        List<EntityResult> hitEntities = null;
+        // 子弹的击中检测，穿透为 1 或者爆炸类弹药限制为一个实体穿透判定
+        if (this.pierce <= 1 || this.explosion) {
+            EntityResult entityResult = EntityUtil.findEntityOnPath(this, startVec, endVec);
+            // 将单个命中是实体创建为单个内容的 list
+            if (entityResult != null) {
+                hitEntities = Collections.singletonList(entityResult);
+            }
+        } else {
+            hitEntities = EntityUtil.findEntitiesOnPath(this, startVec, endVec);
+        }
+        // 当子弹击中实体时，进行被命中的实体读取
+        if (hitEntities != null && !hitEntities.isEmpty()) {
+            EntityResult[] hitEntityResult = hitEntities.toArray(new EntityResult[0]);
+            // 对被命中的实体进行排序，按照距离子弹发射位置的距离进行升序排序
+            for (int i = 0; (i < this.pierce || i < 1) && i < (hitEntityResult.length - 1); i++) {
+                int k = i;
+                for (int j = i + 1; j < hitEntityResult.length; j++) {
+                    if (hitEntityResult[j].hitVec.distanceTo(startVec) < hitEntityResult[k].hitVec.distanceTo(startVec)) {
+                        k = j;
+                    }
+                }
+                EntityResult t = hitEntityResult[i];
+                hitEntityResult[i] = hitEntityResult[k];
+                hitEntityResult[k] = t;
+            }
+            for (EntityResult entityResult : hitEntityResult) {
+                result = new TacHitResult(entityResult);
+                this.onHitEntity((TacHitResult) result, startVec, endVec);
+                this.pierce--;
+                if (this.pierce < 1 || this.explosion) {
+                    // 子弹已经穿透所有实体，结束子弹的飞行
+                    this.discard();
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public void shoot(double pitch, double yaw, float pVelocity, Vector2d vector2d) {
@@ -365,6 +434,7 @@ public class EntityKineticBullet extends Projectile implements IEntityWithComple
 
         Vec3 vec3 = new Vec3(left.x, left.y, left.z).normalize().scale(pVelocity);
 
+        this.initialSpeed = pVelocity;
         this.setDeltaMovement(vec3.x, vec3.y, vec3.z);
         double d0 = vec3.horizontalDistance();
         this.setYRot((float)(Mth.atan2(vec3.x, vec3.z) * (double)(180F / (float)Math.PI)));
@@ -475,24 +545,41 @@ public class EntityKineticBullet extends Projectile implements IEntityWithComple
         }
     }
 
-    protected void onHitBlock(BlockHitResult result, Vec3 startVec, Vec3 endVec) {
+    /**
+     * @return where the bullet left the block if a listener let it through (it keeps flying, slowed down), otherwise null (the
+     *     bullet stopped here, or a listener cancelled the hit)
+     */
+    @Nullable
+    protected Vec3 onHitBlock(BlockHitResult result, Vec3 startVec, Vec3 endVec) {
         if (result.getType() == HitResult.Type.MISS) {
-            return;
+            return null;
         }
         BlockPos pos = result.getBlockPos();
         Vec3 hitVec = result.getLocation();
         // 触发事件
         // 提前触发事件以让事件可以取消原版的命中行为（例如敲钟，打倒靶子等）
-        if (NeoForge.EVENT_BUS.post(new AmmoHitBlockEvent(this.level(), result, this.level().getBlockState(pos), this)).isCanceled()) {
-            return;
+        AmmoHitBlockEvent hitEvent = new AmmoHitBlockEvent(this.level(), result, this.level().getBlockState(pos), this);
+        if (NeoForge.EVENT_BUS.post(hitEvent).isCanceled()) {
+            return null;
         }
+        // Explosive rounds always detonate on the first block
+        Vec3 penetrationExit = this.explosion ? null : hitEvent.getPenetrationExit();
         super.onHitBlock(result);
+        if (penetrationExit != null) {
+            // Bullet hole on the entry face; the bullet keeps flying, slowed down
+            if (this.level() instanceof ServerLevel serverLevel) {
+                BulletHoleOption bulletHoleOption = new BulletHoleOption(result.getDirection(), result.getBlockPos(), this.ammoId.toString(), this.gunId.toString(), this.gunDisplayId.toString());
+                serverLevel.sendParticles(bulletHoleOption, hitVec.x, hitVec.y, hitVec.z, 1, 0, 0, 0, 0);
+            }
+            this.pendingSpeedFactor *= hitEvent.getResidualSpeedFactor();
+            return penetrationExit;
+        }
         // 爆炸
         if (this.explosion) {
             ExplodeUtil.createExplosion(this.getOwner(), this, this.explosionDamage, this.explosionRadius, this.explosionKnockback, this.explosionDestroyBlock, hitVec);
             // 爆炸直接结束不留弹孔，不处理之后的逻辑
             this.discard();
-            return;
+            return null;
         }
         // 弹孔与点燃特效
         if (this.level() instanceof ServerLevel serverLevel) {
@@ -511,6 +598,7 @@ public class EntityKineticBullet extends Projectile implements IEntityWithComple
             }
         }
         this.discard();
+        return null;
     }
 
     // 根据距离进行伤害衰减设计
@@ -653,6 +741,18 @@ public class EntityKineticBullet extends Projectile implements IEntityWithComple
 
     public boolean isTracerAmmo() {
         return isTracerAmmo;
+    }
+
+    /**
+     * DNCity: 发射的具体子弹物品 ID (IAmmoRound)，未知时为 null。仅服务端。
+     */
+    @Nullable
+    public ResourceLocation getRoundId() {
+        return roundId;
+    }
+
+    public void setRoundId(@Nullable ResourceLocation roundId) {
+        this.roundId = roundId;
     }
 
     public RandomSource getRandom() {

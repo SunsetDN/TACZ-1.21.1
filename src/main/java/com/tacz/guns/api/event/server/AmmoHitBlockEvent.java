@@ -5,7 +5,9 @@ import com.tacz.guns.entity.EntityKineticBullet;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.Event;
+import org.jetbrains.annotations.Nullable;
 import net.neoforged.bus.api.ICancellableEvent;
 
 /**
@@ -40,4 +42,32 @@ public class AmmoHitBlockEvent extends Event implements KubeJSGunEventPoster<Amm
     public EntityKineticBullet getAmmo() {
         return ammo;
     }
+
+    /**
+     * A listener says the bullet went through the block: it leaves at {@code exit} (the point where its flight line leaves the
+     * block's shape) with its speed scaled by {@code speedFactor} (0..1]. The bullet then keeps tracing the rest of this tick's
+     * path from {@code exit}, so it can hit what lies behind the block in the same tick. Leaves the event uncancelled; do not
+     * cancel it as well.
+     */
+    public void setPenetrated(Vec3 exit, float speedFactor) {
+        if (!(speedFactor > 0f && speedFactor <= 1f)) {
+            throw new IllegalArgumentException("speed factor must be in (0, 1], was " + speedFactor);
+        }
+        this.penetrationExit = exit;
+        this.residualSpeedFactor = speedFactor;
+    }
+
+    /** Where the bullet left the block, or null if no listener said it went through. */
+    @Nullable
+    public Vec3 getPenetrationExit() {
+        return penetrationExit;
+    }
+
+    public float getResidualSpeedFactor() {
+        return residualSpeedFactor;
+    }
+
+    @Nullable
+    private Vec3 penetrationExit = null;
+    private float residualSpeedFactor = 1f;
 }

@@ -3,6 +3,7 @@ package com.tacz.guns.client.sound;
 import com.tacz.guns.GunMod;
 import com.tacz.guns.api.TimelessAPI;
 import com.tacz.guns.api.item.IAttachment;
+import com.tacz.guns.api.item.IGun;
 import com.tacz.guns.client.resource.GunDisplayInstance;
 import com.tacz.guns.client.sound.fmod.FmodWeaponSoundManager;
 import com.tacz.guns.config.client.SoundConfig;
@@ -120,7 +121,24 @@ public class SoundPlayManager {
         });
     }
 
+    /**
+     * Launchers (gun type "rpg": RPG-7, M320, ...) keep their own gun-pack sounds through the vanilla sound engine. weapons.bank
+     * has no launcher takes (the RPG-7 would borrow the M32A1's grenade thump), so only small arms go through FMOD.
+     */
+    private static boolean usesVanillaSounds(LivingEntity entity) {
+        ItemStack stack = entity.getMainHandItem();
+        IGun iGun = IGun.getIGunOrNull(stack);
+        if (iGun == null) {
+            return false;
+        }
+        return TimelessAPI.getCommonGunIndex(iGun.getGunId(stack)).map(index -> "rpg".equals(index.getType())).orElse(false);
+    }
+
     public static void playShootSound(LivingEntity entity, GunDisplayInstance gunIndex, GunData gunData) {
+        if (usesVanillaSounds(entity)) {
+            playClientSound(entity, gunIndex.getSounds(SoundManager.SHOOT_SOUND), 0.8f, 0.9f + entity.getRandom().nextFloat() * 0.125f, (int) (GunConfig.DEFAULT_GUN_FIRE_SOUND_DISTANCE.get() * gunData.getFireSound().getFireMultiplier()), false, SoundConfig.HIGH_FREQUENCY_SOUND_CONCURRENCY_LIMIT.get(), false, false);
+            return;
+        }
         FmodWeaponSoundManager.playShoot(entity, gunIndex.getDisplayId());
     }
 
@@ -143,6 +161,11 @@ public class SoundPlayManager {
     }
 
     public static void playReloadSound(LivingEntity entity, GunDisplayInstance display, boolean noAmmo) {
+        if (usesVanillaSounds(entity)) {
+            String sound = noAmmo ? SoundManager.RELOAD_EMPTY_SOUND : SoundManager.RELOAD_TACTICAL_SOUND;
+            tmpSoundInstance = playClientSound(entity, display.getSounds(sound), 1.0f, 1.0f, GunConfig.DEFAULT_GUN_OTHER_SOUND_DISTANCE.get());
+            return;
+        }
         if (noAmmo) {
             FmodWeaponSoundManager.playReloadEmpty(entity, display.getDisplayId());
         } else {
@@ -159,14 +182,26 @@ public class SoundPlayManager {
     }
 
     public static void playBoltSound(LivingEntity entity, GunDisplayInstance display) {
+        if (usesVanillaSounds(entity)) {
+            tmpSoundInstance = playClientSound(entity, display.getSounds(SoundManager.BOLT_SOUND), 1.0f, 1.0f, GunConfig.DEFAULT_GUN_OTHER_SOUND_DISTANCE.get());
+            return;
+        }
         FmodWeaponSoundManager.playBolt(entity);
     }
 
     public static void playDrawSound(LivingEntity entity, GunDisplayInstance display) {
+        if (usesVanillaSounds(entity)) {
+            tmpSoundInstance = playClientSound(entity, display.getSounds(SoundManager.DRAW_SOUND), 1.0f, 1.0f, GunConfig.DEFAULT_GUN_OTHER_SOUND_DISTANCE.get());
+            return;
+        }
         FmodWeaponSoundManager.playDraw(entity, display.getDisplayId());
     }
 
     public static void playPutAwaySound(LivingEntity entity, GunDisplayInstance display) {
+        if (usesVanillaSounds(entity)) {
+            tmpSoundInstance = playClientSound(entity, display.getSounds(SoundManager.PUT_AWAY_SOUND), 1.0f, 1.0f, GunConfig.DEFAULT_GUN_OTHER_SOUND_DISTANCE.get());
+            return;
+        }
         FmodWeaponSoundManager.playPutAway(entity, display.getDisplayId());
     }
 

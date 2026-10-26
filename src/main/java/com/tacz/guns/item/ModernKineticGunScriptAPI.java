@@ -11,6 +11,7 @@ import com.tacz.guns.api.item.IAmmoBox;
 import com.tacz.guns.api.item.attachment.AttachmentType;
 import com.tacz.guns.api.item.gun.AbstractGunItem;
 import com.tacz.guns.api.item.gun.FireMode;
+import com.tacz.guns.api.item.nbt.LoadedRounds;
 import com.tacz.guns.api.util.LuaEntityAccessor;
 import com.tacz.guns.api.util.LuaNbtAccessor;
 import com.tacz.guns.client.animation.statemachine.GunAnimationStateContext;
@@ -183,10 +184,15 @@ public class ModernKineticGunScriptAPI {
                 // 生成子弹
                 Level world = shooter.level();
                 ResourceLocation ammoId = gunData.getAmmoId();
+                // DNCity: 这一发是哪种子弹 (见 LoadedRounds)。已知子弹由自身决定是否曳光，散弹只有第一颗弹丸曳光
+                LoadedRounds.Round round = consumeAmmo ? LoadedRounds.pop(itemStack) : LoadedRounds.Round.UNKNOWN;
                 for (int i = 0; i < bulletAmount; i++) {
-                    boolean isTracer = bulletData.hasTracerAmmo() && gunOperator.nextBulletIsTracer(bulletData.getTracerCountInterval());
+                    boolean isTracer = round.known()
+                            ? round.tracer() && i == 0
+                            : bulletData.hasTracerAmmo() && gunOperator.nextBulletIsTracer(bulletData.getTracerCountInterval());
                     EntityKineticBullet bullet = new EntityKineticBullet(world, shooter, itemStack, ammoId, gunId,
                             gunDisplayId, isTracer, gunData, bulletData);
+                    bullet.setRoundId(round.id());
                     bullet.applyShotgunDamageSpread(bulletAmount);
                     bullet.setShotDamageMultiplier(shotDamageMultiplier);
                     abstractGunItem.doBulletSpread(dataHolder, itemStack, shooter, bullet, i, processedSpeed,
